@@ -12,7 +12,8 @@ const CONTRACTS_CONFIG = {
             blockExplorer: 'https://dev2.bon-soleil.com/explorer',
             contracts: {
                 bankedNFT: '0xD8543363D99314fdE362014CF89CF6b5417d2B68',
-                metadataBank: '0x565B793c191FE9C0D9980eCDB05A1471aBA198b4'
+                metadataBank: '0x565B793c191FE9C0D9980eCDB05A1471aBA198b4',
+                legendaryBank: '0xf6691E452fc377c3ea4975696bD20E3CCe4d686a'
             }
         },
         // Base Mainnet (Production)
@@ -23,7 +24,8 @@ const CONTRACTS_CONFIG = {
             blockExplorer: 'https://basescan.org',
             contracts: {
                 bankedNFT: '0x0000000000000000000000000000000000000000', // TODO: Deploy and update
-                metadataBank: '0x0000000000000000000000000000000000000000' // TODO: Deploy and update
+                metadataBank: '0x0000000000000000000000000000000000000000', // TODO: Deploy and update
+                legendaryBank: '0x0000000000000000000000000000000000000000' // TODO: Deploy and update
             }
         },
         // Base Sepolia (Testing)
@@ -34,7 +36,8 @@ const CONTRACTS_CONFIG = {
             blockExplorer: 'https://sepolia.basescan.org',
             contracts: {
                 bankedNFT: '0x0000000000000000000000000000000000000000', // TODO: Deploy and update
-                metadataBank: '0x0000000000000000000000000000000000000000' // TODO: Deploy and update
+                metadataBank: '0x0000000000000000000000000000000000000000', // TODO: Deploy and update
+                legendaryBank: '0x0000000000000000000000000000000000000000' // TODO: Deploy and update
             }
         }
     },

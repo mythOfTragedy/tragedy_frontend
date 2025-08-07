@@ -241,7 +241,15 @@
       let blockchainConfig = null;
       let userAddress = null;
       let bankedNFTContract = null;
+      let legendaryBankContract = null;
       let ownedTokenIds = [];
+      let mintedTokenIds = [];
+      let legendaryTokenIds = [];
+      let metadataCache = new Map(); // Cache for loaded metadata
+      let currentPage = 0;
+      const BATCH_SIZE = 20; // Load 20 NFTs at a time
+      let isLoading = false;
+      let hasMoreToLoad = true;
       
       // Load blockchain configuration
       async function loadBlockchainConfig() {
@@ -268,7 +276,18 @@
                         "function balanceOf(address owner) view returns (uint256)",
                         "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
                         "function ownerOf(uint256 tokenId) view returns (address)",
-                        "function tokenURI(uint256 tokenId) view returns (string)"
+                        "function tokenURI(uint256 tokenId) view returns (string)",
+                        "function totalSupply() view returns (uint256)"
+                      ]
+                    },
+                    legendaryBank: {
+                      address: network.contracts.legendaryBank,
+                      abi: [
+                        "function getLegendaryCount() view returns (uint256)",
+                        "function legendaryIds(uint256 index) view returns (uint256)",
+                        "function isLegendaryId(uint256 tokenId) view returns (bool)",
+                        "function getLegendaryTitle(uint256 tokenId) view returns (string)",
+                        "function getLegendaryDescription(uint256 tokenId) view returns (string)"
                       ]
                     }
                   }
@@ -313,7 +332,18 @@
                     "function balanceOf(address owner) view returns (uint256)",
                     "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
                     "function ownerOf(uint256 tokenId) view returns (address)",
-                    "function tokenURI(uint256 tokenId) view returns (string)"
+                    "function tokenURI(uint256 tokenId) view returns (string)",
+                    "function totalSupply() view returns (uint256)"
+                  ]
+                },
+                legendaryBank: {
+                  address: "0xf6691E452fc377c3ea4975696bD20E3CCe4d686a",
+                  abi: [
+                    "function getLegendaryCount() view returns (uint256)",
+                    "function legendaryIds(uint256 index) view returns (uint256)",
+                    "function isLegendaryId(uint256 tokenId) view returns (bool)",
+                    "function getLegendaryTitle(uint256 tokenId) view returns (string)",
+                    "function getLegendaryDescription(uint256 tokenId) view returns (string)"
                   ]
                 }
               }
@@ -349,9 +379,13 @@
           const bankedNFTConfig = network.contracts.bankedNFT;
           bankedNFTContract = new ethers.Contract(bankedNFTConfig.address, bankedNFTConfig.abi, provider);
           
+          const legendaryBankConfig = network.contracts.legendaryBank;
+          legendaryBankContract = new ethers.Contract(legendaryBankConfig.address, legendaryBankConfig.abi, provider);
+          
           console.log(`Connected to ${network.name} at ${network.rpcUrl}`);
           console.log(`MetadataBank address: ${metadataBankConfig.address}`);
           console.log(`BankedNFT address: ${bankedNFTConfig.address}`);
+          console.log(`LegendaryBank address: ${legendaryBankConfig.address}`);
           
           return true;
         } catch (error) {
@@ -363,7 +397,9 @@
       // Generate metadata from blockchain
       async function generateMetadataFromBlockchain(id) {
         try {
-          const index = (id - 1) % 10000;
+          // Use id - 1 as index (no modulo to avoid wrapping)
+          const index = id - 1;
+          console.log(`Generating metadata for ID: ${id}, using index: ${index}`);
           let metadataUri = await metadataBank.getMetadata(index);
           
           // Check if the result is an address (proxy pattern)
@@ -397,6 +433,14 @@
           
           // Add the ID to the metadata
           metadata.id = id;
+          
+          // Log metadata for debugging
+          console.log(`Metadata for ID ${id}:`, {
+            id: metadata.id,
+            name: metadata.name,
+            description: metadata.description?.substring(0, 50) + '...'
+          });
+          
           return metadata;
         } catch (error) {
           console.error('Error fetching from blockchain:', error);
@@ -404,30 +448,135 @@
         }
       }
       
-      // Initialize with some random stories
+      // Load minted NFTs
+      async function loadMintedNFTs() {
+        try {
+          const totalSupply = await bankedNFTContract.totalSupply();
+          console.log(`Total minted NFTs: ${totalSupply.toString()}`);
+          
+          mintedTokenIds = [];
+          for (let i = 1; i <= totalSupply; i++) {
+            mintedTokenIds.push(i);
+          }
+          
+          return mintedTokenIds;
+        } catch (error) {
+          console.error('Failed to load minted NFTs:', error);
+          return [];
+        }
+      }
+      
+      // Load legendary token IDs
+      async function loadLegendaryTokenIds() {
+        try {
+          const count = await legendaryBankContract.getLegendaryCount();
+          console.log(`Total legendary tokens: ${count.toString()}`);
+          
+          legendaryTokenIds = [];
+          for (let i = 0; i < count; i++) {
+            const tokenId = await legendaryBankContract.legendaryIds(i);
+            legendaryTokenIds.push(tokenId.toNumber());
+          }
+          
+          console.log('Legendary token IDs:', legendaryTokenIds);
+          return legendaryTokenIds;
+        } catch (error) {
+          console.error('Failed to load legendary token IDs:', error);
+          return [];
+        }
+      }
+      
+      // Initialize with first batch of minted stories
       async function loadRandomStories() {
         const storiesGrid = document.getElementById('storiesGrid');
         storiesGrid.innerHTML = '<p style="text-align: center; color: #C084FC;">Loading essays from blockchain...</p>';
         
-        if (!metadataBank) {
+        if (!metadataBank || !bankedNFTContract) {
           storiesGrid.innerHTML = '<p style="text-align: center; color: #EF4444;">Blockchain connection not available. Please refresh the page.</p>';
           return;
         }
         
+        // Reset pagination
+        currentPage = 0;
         loadedStories = [];
-        const promises = [];
+        hasMoreToLoad = true;
         
-        // Generate 20 random essays
-        for (let i = 0; i < 20; i++) {
-          const randomId = Math.floor(Math.random() * 10000) + 1;
-          promises.push(generateMetadataFromBlockchain(randomId));
+        // Load all minted token IDs (but not their metadata yet)
+        const minted = await loadMintedNFTs();
+        if (minted.length === 0) {
+          storiesGrid.innerHTML = '<p style="text-align: center; color: #C084FC;">No NFTs have been minted yet.</p>';
+          return;
         }
         
+        // Load legendary token IDs for later use
+        await loadLegendaryTokenIds();
+        
+        // Load first batch
+        await loadNextBatch();
+      }
+      
+      // Load next batch of stories
+      async function loadNextBatch() {
+        if (isLoading || !hasMoreToLoad) return;
+        
+        isLoading = true;
+        const storiesGrid = document.getElementById('storiesGrid');
+        
         try {
-          loadedStories = await Promise.all(promises);
+          let tokenIdsToLoad = [];
+          
+          if (currentFilter === 'all') {
+            // For "All Essays", load next batch of minted NFTs
+            const start = currentPage * BATCH_SIZE;
+            const end = Math.min(start + BATCH_SIZE, mintedTokenIds.length);
+            tokenIdsToLoad = mintedTokenIds.slice(start, end);
+            hasMoreToLoad = end < mintedTokenIds.length;
+          } else if (currentFilter === 'legendary') {
+            // For "Legendary", already loaded all
+            hasMoreToLoad = false;
+            return;
+          } else if (currentFilter === 'own') {
+            // For "Own", already loaded all
+            hasMoreToLoad = false;
+            return;
+          }
+          
+          if (tokenIdsToLoad.length === 0) {
+            hasMoreToLoad = false;
+            isLoading = false;
+            return;
+          }
+          
+          // Show loading indicator
+          if (currentPage === 0) {
+            storiesGrid.innerHTML = '<p style="text-align: center; color: #C084FC;">Loading essays...</p>';
+          }
+          
+          // Load metadata for batch
+          const promises = tokenIdsToLoad.map(tokenId => {
+            // Check cache first
+            if (metadataCache.has(tokenId)) {
+              return Promise.resolve(metadataCache.get(tokenId));
+            }
+            return generateMetadataFromBlockchain(tokenId).then(metadata => {
+              metadataCache.set(tokenId, metadata);
+              return metadata;
+            });
+          });
+          
+          const batchStories = await Promise.all(promises);
+          loadedStories = [...loadedStories, ...batchStories];
+          
+          currentPage++;
           displayStories();
+          
         } catch (error) {
-          storiesGrid.innerHTML = '<p style="text-align: center; color: #EF4444;">Failed to load essays from blockchain. Please try again.</p>';
+          console.error('Failed to load batch:', error);
+          if (currentPage === 0) {
+            storiesGrid.innerHTML = '<p style="text-align: center; color: #EF4444;">Failed to load essays. Please try again.</p>';
+          }
+        } finally {
+          isLoading = false;
         }
       }
       
@@ -467,13 +616,19 @@
           });
         }
         
+        if (filter === 'legendary') {
+          // Filter to show only legendary NFTs from LegendaryBank
+          return stories.filter(story => {
+            const tokenId = parseInt(story.id);
+            return legendaryTokenIds.includes(tokenId);
+          });
+        }
+        
         return stories.filter(story => {
           const rarity = story.attributes.find(a => a.trait_type === 'Rarity')?.value?.toLowerCase() || 'common';
           const isSpecial = story.attributes.find(a => a.trait_type === 'Special');
           
           switch(filter) {
-            case 'legendary':
-              return rarity === 'legendary';
             case 'epic':
               return rarity === 'epic';
             case 'rare':
@@ -495,9 +650,8 @@
         
         card.className = `story-card ${rarity}`;
         
-        // Extract ID from name
-        const idMatch = story.name.match(/#(\d+)$/);
-        const storyId = idMatch ? idMatch[1] : '1';
+        // Use the ID directly from the story object
+        const storyId = story.id || '1';
         
         // Create badge HTML
         let badgeHtml = '';
@@ -622,7 +776,8 @@
       }
       
       // Filter stories
-      function filterStories(filter) {
+      async function filterStories(filter) {
+        const previousFilter = currentFilter;
         currentFilter = filter;
         displayCount = 12;
         
@@ -644,13 +799,54 @@
           walletStatus.style.display = 'none';
         }
         
-        displayStories();
+        // Reset pagination when switching filters
+        if (filter !== previousFilter) {
+          currentPage = 0;
+          hasMoreToLoad = true;
+        }
+        
+        // For legendary filter, load all legendary NFTs (minted or not)
+        if (filter === 'legendary' && legendaryTokenIds.length > 0) {
+          const storiesGrid = document.getElementById('storiesGrid');
+          storiesGrid.innerHTML = '<p style="text-align: center; color: #C084FC;">Loading legendary essays...</p>';
+          
+          // Use cache for legendary NFTs too
+          const promises = legendaryTokenIds.map(tokenId => {
+            if (metadataCache.has(tokenId)) {
+              return Promise.resolve(metadataCache.get(tokenId));
+            }
+            return generateMetadataFromBlockchain(tokenId).then(metadata => {
+              metadataCache.set(tokenId, metadata);
+              return metadata;
+            });
+          });
+          
+          try {
+            loadedStories = await Promise.all(promises);
+            displayStories();
+          } catch (error) {
+            console.error('Failed to load legendary stories:', error);
+            displayStories();
+          }
+        } else if (filter === 'all' && currentPage === 0) {
+          // For "All Essays", load first batch
+          loadedStories = [];
+          await loadNextBatch();
+        } else {
+          displayStories();
+        }
       }
       
       // Load more stories
-      function loadMoreStories() {
-        displayCount += 12;
-        displayStories();
+      async function loadMoreStories() {
+        if (currentFilter === 'all' && hasMoreToLoad) {
+          // For "All Essays", load next batch from blockchain
+          await loadNextBatch();
+        } else {
+          // For other filters, just show more of already loaded stories
+          displayCount += 12;
+          displayStories();
+        }
       }
       
       // Load stories on page load
