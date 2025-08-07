@@ -211,6 +211,12 @@
         <button class="filter-button" onclick="filterStories('epic')">Epic</button>
         <button class="filter-button" onclick="filterStories('rare')">Rare</button>
         <button class="filter-button" onclick="filterStories('special')">Special Combos</button>
+        <button class="filter-button" onclick="filterStories('own')">Own</button>
+      </div>
+      
+      <div id="walletStatus" style="text-align: center; margin-top: 20px; display: none;">
+        <button id="connectWalletBtn" onclick="connectWallet()" class="legendary-button">Connect Wallet</button>
+        <p id="walletAddress" style="color: #A78BFA; margin-top: 10px;"></p>
       </div>
       
       <div id="storiesGrid" class="stories-grid">
@@ -233,6 +239,9 @@
       let provider;
       let metadataBank;
       let blockchainConfig = null;
+      let userAddress = null;
+      let bankedNFTContract = null;
+      let ownedTokenIds = [];
       
       // Load blockchain configuration
       async function loadBlockchainConfig() {
@@ -251,6 +260,15 @@
                       abi: [
                         "function getMetadataCount() view returns (uint256)",
                         "function getMetadata(uint256 index) view returns (string)"
+                      ]
+                    },
+                    bankedNFT: {
+                      address: network.contracts.bankedNFT,
+                      abi: [
+                        "function balanceOf(address owner) view returns (uint256)",
+                        "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+                        "function ownerOf(uint256 tokenId) view returns (address)",
+                        "function tokenURI(uint256 tokenId) view returns (string)"
                       ]
                     }
                   }
@@ -288,6 +306,15 @@
                     "function getMetadataCount() view returns (uint256)",
                     "function getMetadata(uint256 index) view returns (string)"
                   ]
+                },
+                bankedNFT: {
+                  address: "0xD8543363D99314fdE362014CF89CF6b5417d2B68",
+                  abi: [
+                    "function balanceOf(address owner) view returns (uint256)",
+                    "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+                    "function ownerOf(uint256 tokenId) view returns (address)",
+                    "function tokenURI(uint256 tokenId) view returns (string)"
+                  ]
                 }
               }
             }
@@ -319,8 +346,12 @@
           const metadataBankConfig = network.contracts.metadataBank;
           metadataBank = new ethers.Contract(metadataBankConfig.address, metadataBankConfig.abi, provider);
           
+          const bankedNFTConfig = network.contracts.bankedNFT;
+          bankedNFTContract = new ethers.Contract(bankedNFTConfig.address, bankedNFTConfig.abi, provider);
+          
           console.log(`Connected to ${network.name} at ${network.rpcUrl}`);
           console.log(`MetadataBank address: ${metadataBankConfig.address}`);
+          console.log(`BankedNFT address: ${bankedNFTConfig.address}`);
           
           return true;
         } catch (error) {
@@ -353,16 +384,20 @@
           }
           
           // Decode the metadata
+          let metadata;
           if (metadataUri.startsWith('data:application/json;base64,')) {
             const base64Json = metadataUri.replace('data:application/json;base64,', '');
             const jsonString = atob(base64Json);
-            const metadata = JSON.parse(jsonString);
-            return metadata;
+            metadata = JSON.parse(jsonString);
           } else if (metadataUri.startsWith('{')) {
-            return JSON.parse(metadataUri);
+            metadata = JSON.parse(metadataUri);
+          } else {
+            throw new Error('Invalid metadata format');
           }
           
-          throw new Error('Invalid metadata format');
+          // Add the ID to the metadata
+          metadata.id = id;
+          return metadata;
         } catch (error) {
           console.error('Error fetching from blockchain:', error);
           throw error;
@@ -418,6 +453,19 @@
       // Filter stories by type
       function filterStoriesByType(stories, filter) {
         if (filter === 'all') return stories;
+        
+        if (filter === 'own') {
+          // Filter to show only owned NFTs
+          console.log('Filtering for owned NFTs. OwnedTokenIds:', ownedTokenIds);
+          return stories.filter(story => {
+            const tokenId = parseInt(story.id);
+            const isOwned = ownedTokenIds.includes(tokenId);
+            if (story.id <= 10) { // Log first 10 for debugging
+              console.log(`Story ID: ${story.id}, TokenID: ${tokenId}, Owned: ${isOwned}`);
+            }
+            return isOwned;
+          });
+        }
         
         return stories.filter(story => {
           const rarity = story.attributes.find(a => a.trait_type === 'Rarity')?.value?.toLowerCase() || 'common';
@@ -495,6 +543,84 @@
         return card;
       }
       
+      // Connect wallet function
+      async function connectWallet() {
+        if (typeof window.ethereum === 'undefined') {
+          alert('Please install MetaMask to use this feature');
+          return;
+        }
+        
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+          userAddress = accounts[0];
+          
+          document.getElementById('connectWalletBtn').style.display = 'none';
+          document.getElementById('walletAddress').textContent = `Connected: ${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`;
+          
+          // Load owned NFTs
+          await loadOwnedNFTs();
+        } catch (error) {
+          console.error('Failed to connect wallet:', error);
+          alert('Failed to connect wallet');
+        }
+      }
+      
+      // Load owned NFTs
+      async function loadOwnedNFTs() {
+        if (!userAddress || !bankedNFTContract) {
+          console.log('Cannot load NFTs - userAddress:', userAddress, 'bankedNFTContract:', bankedNFTContract);
+          return;
+        }
+        
+        try {
+          console.log('Loading NFTs for address:', userAddress);
+          const balance = await bankedNFTContract.balanceOf(userAddress);
+          console.log('Balance:', balance.toString());
+          
+          ownedTokenIds = [];
+          
+          // Use ERC721Enumerable tokenOfOwnerByIndex
+          for (let i = 0; i < balance; i++) {
+            try {
+              const tokenId = await bankedNFTContract.tokenOfOwnerByIndex(userAddress, i);
+              const tokenIdNumber = tokenId.toNumber();
+              ownedTokenIds.push(tokenIdNumber);
+              console.log(`Found owned token at index ${i}: ${tokenIdNumber}`);
+            } catch (error) {
+              console.error(`Error getting token at index ${i}:`, error);
+            }
+          }
+          
+          console.log(`User owns ${ownedTokenIds.length} NFTs:`, ownedTokenIds);
+          
+          // Load the metadata for owned NFTs
+          if (ownedTokenIds.length > 0 && currentFilter === 'own') {
+            await loadOwnedNFTsMetadata();
+          }
+        } catch (error) {
+          console.error('Failed to load owned NFTs:', error);
+          console.error('Error details:', error.message);
+        }
+      }
+      
+      // Load metadata for owned NFTs
+      async function loadOwnedNFTsMetadata() {
+        const promises = ownedTokenIds.map(tokenId => 
+          generateMetadataFromBlockchain(tokenId)
+        );
+        
+        try {
+          const ownedStories = await Promise.all(promises);
+          // Replace loadedStories with owned stories when viewing "own" filter
+          if (currentFilter === 'own') {
+            loadedStories = ownedStories;
+            displayStories();
+          }
+        } catch (error) {
+          console.error('Failed to load owned NFT metadata:', error);
+        }
+      }
+      
       // Filter stories
       function filterStories(filter) {
         currentFilter = filter;
@@ -505,6 +631,18 @@
           btn.classList.remove('active');
         });
         event.target.classList.add('active');
+        
+        // Show wallet connection status for "Own" filter
+        const walletStatus = document.getElementById('walletStatus');
+        if (filter === 'own') {
+          walletStatus.style.display = 'block';
+          if (!userAddress) {
+            document.getElementById('storiesGrid').innerHTML = '<p style="text-align: center; color: #A78BFA;">Please connect your wallet to view your NFTs</p>';
+            return;
+          }
+        } else {
+          walletStatus.style.display = 'none';
+        }
         
         displayStories();
       }
