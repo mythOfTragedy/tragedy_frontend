@@ -202,16 +202,16 @@
       
       <div class="button-group">
         <button onclick="window.location.href='generate.html'">← Back to Generator</button>
-        <button onclick="loadRandomStories()" class="legendary-button">Load Random Essays</button>
       </div>
       
       <div class="filter-controls">
-        <button class="filter-button active" onclick="filterStories('all')">All Essays</button>
-        <button class="filter-button" onclick="filterStories('legendary')">Legendary</button>
-        <button class="filter-button" onclick="filterStories('epic')">Epic</button>
-        <button class="filter-button" onclick="filterStories('rare')">Rare</button>
-        <button class="filter-button" onclick="filterStories('special')">Special Combos</button>
         <button class="filter-button" onclick="filterStories('own')">Own</button>
+        <button class="filter-button active" onclick="filterStories('all')">Minted</button>
+        <button class="filter-button" onclick="filterStories('rare')">Rare</button>
+        <button class="filter-button" onclick="filterStories('epic')">Epic</button>
+        <button class="filter-button" onclick="filterStories('trinity')">Trinity</button>
+        <button class="filter-button" onclick="filterStories('ultimate')">Ultimate</button>
+        <button class="filter-button" onclick="filterStories('legendary')">Legendary</button>
       </div>
       
       <div id="walletStatus" style="text-align: center; margin-top: 20px; display: none;">
@@ -448,17 +448,19 @@
         }
       }
       
-      // Load minted NFTs
+      // Load minted NFTs in descending order (newest first)
       async function loadMintedNFTs() {
         try {
           const totalSupply = await bankedNFTContract.totalSupply();
           console.log(`Total minted NFTs: ${totalSupply.toString()}`);
           
           mintedTokenIds = [];
-          for (let i = 1; i <= totalSupply; i++) {
+          // Load in descending order (newest first)
+          for (let i = totalSupply; i >= 1; i--) {
             mintedTokenIds.push(i);
           }
           
+          console.log('Minted token IDs (newest first):', mintedTokenIds.slice(0, 10), '...');
           return mintedTokenIds;
         } catch (error) {
           console.error('Failed to load minted NFTs:', error);
@@ -526,7 +528,7 @@
           let tokenIdsToLoad = [];
           
           if (currentFilter === 'all') {
-            // For "All Essays", load next batch of minted NFTs
+            // For "Minted", load next batch of minted NFTs (newest first)
             const start = currentPage * BATCH_SIZE;
             const end = Math.min(start + BATCH_SIZE, mintedTokenIds.length);
             tokenIdsToLoad = mintedTokenIds.slice(start, end);
@@ -537,6 +539,11 @@
             return;
           } else if (currentFilter === 'own') {
             // For "Own", already loaded all
+            hasMoreToLoad = false;
+            return;
+          } else {
+            // For other filters (rare, epic, trinity, ultimate), they filter from minted NFTs
+            // So no separate loading needed
             hasMoreToLoad = false;
             return;
           }
@@ -626,15 +633,16 @@
         
         return stories.filter(story => {
           const rarity = story.attributes.find(a => a.trait_type === 'Rarity')?.value?.toLowerCase() || 'common';
-          const isSpecial = story.attributes.find(a => a.trait_type === 'Special');
           
           switch(filter) {
             case 'epic':
               return rarity === 'epic';
             case 'rare':
               return rarity === 'rare';
-            case 'special':
-              return isSpecial;
+            case 'trinity':
+              return rarity === 'trinity';
+            case 'ultimate':
+              return rarity === 'ultimate';
             default:
               return true;
           }
@@ -829,7 +837,7 @@
             displayStories();
           }
         } else if (filter === 'all' && currentPage === 0) {
-          // For "All Essays", load first batch
+          // For "Minted", load first batch
           loadedStories = [];
           await loadNextBatch();
         } else {
@@ -840,7 +848,7 @@
       // Load more stories
       async function loadMoreStories() {
         if (currentFilter === 'all' && hasMoreToLoad) {
-          // For "All Essays", load next batch from blockchain
+          // For "Minted", load next batch from blockchain
           await loadNextBatch();
         } else {
           // For other filters, just show more of already loaded stories
