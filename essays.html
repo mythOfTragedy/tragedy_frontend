@@ -687,10 +687,13 @@
           imageHtml = `<img src="${story.image}" alt="${story.name}" class="story-thumbnail">`;
         }
         
+        // Always add token ID to the display name for consistency
+        const displayName = `${story.name} #${storyId}`;
+        
         card.innerHTML = `
           ${badgeHtml}
           ${imageHtml}
-          <div class="story-title">${story.name}</div>
+          <div class="story-title">${displayName}</div>
           <div class="story-excerpt">${story.description}</div>
           <div class="story-meta">
             <span class="story-id">ID: ${storyId}</span>
